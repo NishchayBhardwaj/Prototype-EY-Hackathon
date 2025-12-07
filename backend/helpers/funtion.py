@@ -59,7 +59,8 @@ class DoctorInfoScraper:
         if npi_data:
             doctor_info["npi_data"] = npi_data
             doctor_info["scraped_sources"].append("NPI Registry")
-            logger.info(f"NPI Registry data found: {len(npi_data)} records")
+            result_count = npi_data.get("result_count", 0)
+            logger.info(f"NPI Registry data found: {result_count} records")
         
         # Step 2: Search Healthcare Provider Directories
         logger.info("Step 2: Searching Healthcare Provider Directories...")
@@ -143,7 +144,8 @@ class DoctorInfoScraper:
                     
                     npi_info.append(provider_info)
                 
-                return {"providers": npi_info, "total_results": len(npi_info)}
+                # Return raw API response to match the expected structure
+                return data
                 
         except requests.RequestException as e:
             logger.error(f"NPI Registry search failed: {str(e)}")
