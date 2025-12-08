@@ -569,6 +569,15 @@ const VerifyPage = () => {
         });
         setSubmitResult(null);
         setErrors({});
+        
+        // Clear PDF-related state and reset to form tab
+        setPdfFile(null);
+        setPdfText('');
+        setPdfVerificationResult(null);
+        setActiveTab('form');
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
     };    // Render verification result field
     const renderResultField = (fieldName, fieldData) => {
         if (!fieldData) return null;

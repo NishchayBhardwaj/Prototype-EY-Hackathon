@@ -394,7 +394,7 @@ const HomePage = () => {
                         <ProcessStep
                             number="01"
                             title="Data Ingestion"
-                            description="Upload provider datasets in any format - CSV, PDF, or direct API. Our system handles structured and unstructured data alike."
+                            description="Add provider data via the form or upload files in PDF, CSV, Text, and other supported formats. Our system automatically handles structured and unstructured inputs."
                         />
                         <ProcessStep
                             number="02"
