@@ -1,6 +1,5 @@
-from fastapi import APIRouter, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 import logging
 import sys
@@ -11,10 +10,35 @@ import re
 import PyPDF2
 import pdfplumber
 from io import BytesIO
+from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_, Integer
+from db.session import get_db
+from db.models import DoctorReport
+
+# Import schemas
+from schemas.doctor_router import (
+    DoctorVerificationRequest,
+    DoctorSearchRequest,
+    VerificationResult,
+    SearchResult,
+    GetReportsResponse,
+    DoctorReportResponse
+)
+
+# Import route constants
+from config.route_config import (
+    VERIFY_DOCTOR,
+    SEARCH_DOCTOR,
+    GET_SPECIALTIES,
+    GET_INSURANCE_NETWORKS,
+    EXTRACT_PDF,
+    HEALTH_CHECK,
+    GET_REPORTS
+)
 
 # Add helpers to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'helpers'))
-from funtion import search_doctor_info, DoctorInfoScraper
+from helpers.funtion import search_doctor_info, DoctorInfoScraper
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -592,60 +616,9 @@ def verify_services_offered(input_services: str, scraped_data: Dict, best_provid
     
     return result
 
-# Pydantic models for request/response validation
-class DoctorVerificationRequest(BaseModel):
-    fullName: str = Field(..., min_length=2, max_length=100, description="Doctor's full name")
-    specialty: str = Field(..., min_length=2, max_length=50, description="Medical specialty")
-    address: Optional[str] = Field(None, max_length=200, description="Practice address")
-    phoneNumber: Optional[str] = Field(None, description="Phone number")
-    licenseNumber: Optional[str] = Field(None, max_length=50, description="Medical license number")
-    insuranceNetworks: Optional[List[str]] = Field(default=None, description="Affiliated insurance networks")
-    servicesOffered: Optional[str] = Field(None, max_length=500, description="Services offered")
-
-    @validator('phoneNumber')
-    def validate_phone(cls, v):
-        if v and not v.replace('-', '').replace('(', '').replace(')', '').replace(' ', '').replace('+', '').isdigit():
-            raise ValueError('Invalid phone number format')
-        return v
-
-    @validator('fullName')
-    def validate_name(cls, v):
-        if len(v.strip().split()) < 2:
-            raise ValueError('Full name must contain at least first and last name')
-        return v.strip()
-
-class DoctorSearchRequest(BaseModel):
-    name: str = Field(..., min_length=2, max_length=100, description="Doctor's name to search")
-    specialty: Optional[str] = Field(None, max_length=50, description="Medical specialty filter")
-
-class FieldVerification(BaseModel):
-    input_field_a: Optional[Any] = None
-    scraped_data_field_a: Optional[Any] = None
-    scraped_from: Optional[str] = None
-    matches: Optional[bool] = None
-
-class VerificationResult(BaseModel):
-    verification_id: str
-    timestamp: str
-    fullName: FieldVerification
-    specialty: FieldVerification
-    address: FieldVerification
-    phoneNumber: FieldVerification
-    licenseNumber: FieldVerification
-    insuranceNetworks: FieldVerification
-    servicesOffered: FieldVerification
-
-class SearchResult(BaseModel):
-    search_id: str
-    timestamp: str
-    query: Dict[str, Any]
-    results: List[Dict[str, Any]]
-    total_found: int
-    sources_used: List[str]
-
 # API Endpoints
-@router.post("/verify", response_model=VerificationResult)
-async def verify_doctor(request: DoctorVerificationRequest):
+@router.post(VERIFY_DOCTOR, response_model=VerificationResult)
+async def verify_doctor(request: DoctorVerificationRequest, db: Session = Depends(get_db)):
     """
     Verify doctor credentials and information through multiple data sources
     """
@@ -657,8 +630,46 @@ async def verify_doctor(request: DoctorVerificationRequest):
         
         # Search for doctor information
         scraped_data = search_doctor_info(request.fullName, request.specialty)
-          # Analyze verification results
+        # Analyze verification results
         verification_result = await analyze_verification(request, scraped_data)
+        
+        # Create database record
+        db_report = DoctorReport(
+            verification_id=verification_id,
+            full_name_input=verification_result["fullName"]["input_field_a"],
+            full_name_scraped=verification_result["fullName"]["scraped_data_field_a"],
+            full_name_scraped_from=verification_result["fullName"]["scraped_from"],
+            full_name_matches=verification_result["fullName"]["matches"],
+            specialty_input=verification_result["specialty"]["input_field_a"],
+            specialty_scraped=verification_result["specialty"]["scraped_data_field_a"],
+            specialty_scraped_from=verification_result["specialty"]["scraped_from"],
+            specialty_matches=verification_result["specialty"]["matches"],
+            address_input=verification_result["address"]["input_field_a"],
+            address_scraped=verification_result["address"]["scraped_data_field_a"],
+            address_scraped_from=verification_result["address"]["scraped_from"],
+            address_matches=verification_result["address"]["matches"],
+            phone_number_input=verification_result["phoneNumber"]["input_field_a"],
+            phone_number_scraped=verification_result["phoneNumber"]["scraped_data_field_a"],
+            phone_number_scraped_from=verification_result["phoneNumber"]["scraped_from"],
+            phone_number_matches=verification_result["phoneNumber"]["matches"],
+            license_number_input=verification_result["licenseNumber"]["input_field_a"],
+            license_number_scraped=verification_result["licenseNumber"]["scraped_data_field_a"],
+            license_number_scraped_from=verification_result["licenseNumber"]["scraped_from"],
+            license_number_matches=verification_result["licenseNumber"]["matches"],
+            insurance_networks_input=verification_result["insuranceNetworks"]["input_field_a"],
+            insurance_networks_scraped=verification_result["insuranceNetworks"]["scraped_data_field_a"],
+            insurance_networks_scraped_from=verification_result["insuranceNetworks"]["scraped_from"],
+            insurance_networks_matches=verification_result["insuranceNetworks"]["matches"],
+            services_offered_input=verification_result["servicesOffered"]["input_field_a"],
+            services_offered_scraped=verification_result["servicesOffered"]["scraped_data_field_a"],
+            services_offered_scraped_from=verification_result["servicesOffered"]["scraped_from"],
+            services_offered_matches=verification_result["servicesOffered"]["matches"]
+        )
+        
+        # Save to database
+        db.add(db_report)
+        db.commit()
+        db.refresh(db_report)
         
         # Prepare response with simplified structure
         result = VerificationResult(
@@ -673,14 +684,16 @@ async def verify_doctor(request: DoctorVerificationRequest):
             servicesOffered=verification_result["servicesOffered"]
         )
         
-        logger.info(f"Verification completed for {request.fullName}")
+        logger.info(f"Verification completed and saved to database for {request.fullName}")
         return result
         
     except Exception as e:
         logger.error(f"Error in doctor verification: {str(e)}")
+        if db:
+            db.rollback()
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
-@router.post("/search", response_model=SearchResult)
+@router.post(SEARCH_DOCTOR, response_model=SearchResult)
 async def search_doctor(request: DoctorSearchRequest):
     """
     Search for doctor information without verification
@@ -734,12 +747,12 @@ async def search_doctor(request: DoctorSearchRequest):
         logger.error(f"Error in doctor search: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
-@router.get("/specialties")
+@router.get(GET_SPECIALTIES)
 async def get_specialties():
     """Get list of available medical specialties"""
     return {"specialties": SPECIALTIES}
 
-@router.get("/insurance-networks")
+@router.get(GET_INSURANCE_NETWORKS)
 async def get_insurance_networks():
     """Get list of available insurance networks"""
     return {"networks": INSURANCE_NETWORKS}
@@ -770,8 +783,8 @@ def validate_pdf_content(provider_info: Dict[str, str]) -> List[str]:
     
     return errors
 
-@router.post("/extract-pdf")
-async def extract_provider_from_pdf(file: UploadFile = File(...)):
+@router.post(EXTRACT_PDF)
+async def extract_provider_from_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Extract provider information from uploaded PDF and perform verification"""
     try:
         # Validate file type
@@ -816,19 +829,59 @@ async def extract_provider_from_pdf(file: UploadFile = File(...)):
         
         # Perform verification if we have minimum required data
         verification_results = None
+        db_report = None
+        
         if verification_request.fullName and verification_request.specialty:
             try:
-                # Use the same verification logic as the form endpoint
-                scraper = DoctorInfoScraper()
+                # Generate verification ID
+                verification_id = f"VER_PDF_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(verification_request.fullName) % 10000:04d}"
+                
+                # Search for doctor information
                 scraped_data = search_doctor_info(
                     verification_request.fullName,
                     verification_request.specialty
                 )
                 
-                # Create verification results using the same logic as verify endpoint
-                verification_id = f"VER_PDF_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(verification_request.fullName) % 10000:04d}"
-                
+                # Analyze verification results
                 verification_result = await analyze_verification(verification_request, scraped_data)
+                
+                # Create database record
+                db_report = DoctorReport(
+                    verification_id=verification_id,
+                    full_name_input=verification_result["fullName"]["input_field_a"],
+                    full_name_scraped=verification_result["fullName"]["scraped_data_field_a"],
+                    full_name_scraped_from=verification_result["fullName"]["scraped_from"],
+                    full_name_matches=verification_result["fullName"]["matches"],
+                    specialty_input=verification_result["specialty"]["input_field_a"],
+                    specialty_scraped=verification_result["specialty"]["scraped_data_field_a"],
+                    specialty_scraped_from=verification_result["specialty"]["scraped_from"],
+                    specialty_matches=verification_result["specialty"]["matches"],
+                    address_input=verification_result["address"]["input_field_a"],
+                    address_scraped=verification_result["address"]["scraped_data_field_a"],
+                    address_scraped_from=verification_result["address"]["scraped_from"],
+                    address_matches=verification_result["address"]["matches"],
+                    phone_number_input=verification_result["phoneNumber"]["input_field_a"],
+                    phone_number_scraped=verification_result["phoneNumber"]["scraped_data_field_a"],
+                    phone_number_scraped_from=verification_result["phoneNumber"]["scraped_from"],
+                    phone_number_matches=verification_result["phoneNumber"]["matches"],
+                    license_number_input=verification_result["licenseNumber"]["input_field_a"],
+                    license_number_scraped=verification_result["licenseNumber"]["scraped_data_field_a"],
+                    license_number_scraped_from=verification_result["licenseNumber"]["scraped_from"],
+                    license_number_matches=verification_result["licenseNumber"]["matches"],
+                    insurance_networks_input=verification_result["insuranceNetworks"]["input_field_a"],
+                    insurance_networks_scraped=verification_result["insuranceNetworks"]["scraped_data_field_a"],
+                    insurance_networks_scraped_from=verification_result["insuranceNetworks"]["scraped_from"],
+                    insurance_networks_matches=verification_result["insuranceNetworks"]["matches"],
+                    services_offered_input=verification_result["servicesOffered"]["input_field_a"],
+                    services_offered_scraped=verification_result["servicesOffered"]["scraped_data_field_a"],
+                    services_offered_scraped_from=verification_result["servicesOffered"]["scraped_from"],
+                    services_offered_matches=verification_result["servicesOffered"]["matches"]
+                )
+                
+                # Save to database
+                db.add(db_report)
+                db.commit()
+                db.refresh(db_report)
                 
                 # Create the same result structure as the verify endpoint
                 verification_results = VerificationResult(
@@ -843,8 +896,12 @@ async def extract_provider_from_pdf(file: UploadFile = File(...)):
                     servicesOffered=verification_result["servicesOffered"]
                 )
                 
+                logger.info(f"PDF verification completed and saved to database for {verification_request.fullName}")
+                
             except Exception as e:
-                logger.warning(f"Verification failed for PDF data: {str(e)}")
+                logger.error(f"Verification failed for PDF data: {str(e)}")
+                if db:
+                    db.rollback()
                 # Continue without verification results
         
         return {
@@ -854,13 +911,17 @@ async def extract_provider_from_pdf(file: UploadFile = File(...)):
             "verification_results": verification_results,
             "filename": file.filename,
             "timestamp": datetime.now().isoformat(),
-            "has_verification": verification_results is not None
+            "has_verification": verification_results is not None,
+            "saved_to_database": db_report is not None,
+            "report_id": str(db_report.report_id) if db_report else None
         }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error processing PDF: {str(e)}")
+        if db:
+            db.rollback()
         raise HTTPException(status_code=500, detail=f"PDF processing failed: {str(e)}")
 
 async def extract_text_from_pdf(file_content: bytes) -> str:
@@ -1072,7 +1133,7 @@ def parse_provider_info(text: str) -> Dict[str, str]:
     
     return provider_info
 
-@router.get("/health")
+@router.get(HEALTH_CHECK)
 async def health_check():
     """Health check for doctor verification service"""
     try:
@@ -1095,3 +1156,133 @@ async def health_check():
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+@router.get(GET_REPORTS, response_model=GetReportsResponse)
+async def get_reports(
+    skip: int = Query(0, description="Number of records to skip for pagination"),
+    limit: int = Query(10, description="Maximum number of records to return"),
+    full_name: Optional[str] = Query(None, description="Filter by doctor's full name (partial match)"),
+    specialty: Optional[str] = Query(None, description="Filter by medical specialty (partial match)"),
+    sort_field: Optional[str] = Query("created_at", description="Field to sort by (created_at, full_name, specialty, verification_id, etc.)"),
+    sort_order: Optional[str] = Query("descend", description="Sort order (ascend/descend)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all doctor reports with advanced filtering and pagination
+    
+    Supports filtering by:
+    - full_name: partial match on doctor's name (input or scraped)
+    - specialty: partial match on specialty (input or scraped)  
+
+    Supports sorting by:
+    - sort_field: full_name, specialty
+    - sort_order: ascend/descend
+    """
+    try:
+        logger.info(f"Fetching reports with filters - full_name: {full_name}, specialty: {specialty}")
+        
+        # Validate pagination parameters
+        if skip < 0:
+            raise HTTPException(status_code=400, detail="Skip must be non-negative")
+        if limit <= 0 or limit > 100:
+            raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+        
+        # Build base query
+        query = db.query(DoctorReport)
+        
+        # Apply filters
+        if full_name and full_name.strip():
+            name_filter = full_name.strip()
+            query = query.filter(
+                or_(
+                    func.lower(DoctorReport.full_name_input).contains(func.lower(name_filter)),
+                    func.lower(DoctorReport.full_name_scraped).contains(func.lower(name_filter))
+                )
+            )
+        
+        if specialty and specialty.strip():
+            specialty_filter = specialty.strip()
+            query = query.filter(
+                or_(
+                    func.lower(DoctorReport.specialty_input).contains(func.lower(specialty_filter)),
+                    func.lower(DoctorReport.specialty_scraped).contains(func.lower(specialty_filter))
+                )
+            )
+        
+        # Get total count for pagination info
+        total_count = query.count()
+        
+        # Apply sorting
+        sort_field_map = {
+            "full_name": func.coalesce(DoctorReport.full_name_input, DoctorReport.full_name_scraped, ''),
+            "specialty": func.coalesce(DoctorReport.specialty_input, DoctorReport.specialty_scraped, '')
+        }
+        
+        # Default to created_at if sort_field is not specified or not found in map
+        sort_column = sort_field_map.get(sort_field, DoctorReport.created_at)
+        
+        if sort_order and sort_order.lower() == "ascend":
+            sort_expr = sort_column.asc()
+        else:
+            sort_expr = sort_column.desc()
+        
+        # Apply pagination and get results
+        reports = query.order_by(sort_expr).offset(skip).limit(limit).all()
+        
+        # Convert to response format
+        report_responses = []
+        for report in reports:
+            report_response = DoctorReportResponse(
+                report_id=str(report.report_id),
+                verification_id=report.verification_id,
+                full_name_input=report.full_name_input,
+                full_name_scraped=report.full_name_scraped,
+                full_name_scraped_from=report.full_name_scraped_from,
+                full_name_matches=report.full_name_matches,
+                specialty_input=report.specialty_input,
+                specialty_scraped=report.specialty_scraped,
+                specialty_scraped_from=report.specialty_scraped_from,
+                specialty_matches=report.specialty_matches,
+                address_input=report.address_input,
+                address_scraped=report.address_scraped,
+                address_scraped_from=report.address_scraped_from,
+                address_matches=report.address_matches,
+                phone_number_input=report.phone_number_input,
+                phone_number_scraped=report.phone_number_scraped,
+                phone_number_scraped_from=report.phone_number_scraped_from,
+                phone_number_matches=report.phone_number_matches,
+                license_number_input=report.license_number_input,
+                license_number_scraped=report.license_number_scraped,
+                license_number_scraped_from=report.license_number_scraped_from,
+                license_number_matches=report.license_number_matches,
+                insurance_networks_input=report.insurance_networks_input,
+                insurance_networks_scraped=report.insurance_networks_scraped,
+                insurance_networks_scraped_from=report.insurance_networks_scraped_from,
+                insurance_networks_matches=report.insurance_networks_matches,
+                services_offered_input=report.services_offered_input,
+                services_offered_scraped=report.services_offered_scraped,
+                services_offered_scraped_from=report.services_offered_scraped_from,
+                services_offered_matches=report.services_offered_matches,
+                created_at=report.created_at.isoformat(),
+                updated_at=report.updated_at.isoformat()
+            )
+            report_responses.append(report_response)
+        
+        # Prepare response
+        response = GetReportsResponse(
+            reports=report_responses,
+            total_count=total_count,
+            skip=skip,
+            limit=limit,
+            has_next=skip + limit < total_count,
+            has_previous=skip > 0
+        )
+        
+        logger.info(f"Retrieved {len(report_responses)} reports out of {total_count} total")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching reports: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch reports: {str(e)}")
