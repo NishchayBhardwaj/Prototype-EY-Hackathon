@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import * as XLSX from 'xlsx';
 import './ReportsPage.css';
 import './VerifyPage.css'; // Import VerifyPage CSS for statistical components
 
@@ -415,6 +416,54 @@ const ReportsPage = () => {
         setShowDetailModal(true);
     };
 
+    // Download reports as Excel
+    const handleDownloadExcel = () => {
+        if (reports.length === 0) return;
+
+        // Prepare data for Excel
+        const excelData = reports.map(report => {
+            const stats = calculateVerificationStats(report);
+            return {
+                'Verification ID': report.verification_id || 'N/A',
+                'Provider Name': report.full_name_input || report.full_name_scraped || 'N/A',
+                'Specialty': report.specialty_input || report.specialty_scraped || 'N/A',
+                'Address (Input)': report.address_input || 'N/A',
+                'Address (Found)': report.address_scraped || 'N/A',
+                'Phone (Input)': report.phone_number_input || 'N/A',
+                'Phone (Found)': report.phone_number_scraped || 'N/A',
+                'License Number (Input)': report.license_number_input || 'N/A',
+                'License Number (Found)': report.license_number_scraped || 'N/A',
+                'Insurance Networks (Input)': Array.isArray(report.insurance_networks_input) ? report.insurance_networks_input.join(', ') : (report.insurance_networks_input || 'N/A'),
+                'Insurance Networks (Found)': Array.isArray(report.insurance_networks_scraped) ? report.insurance_networks_scraped.join(', ') : (report.insurance_networks_scraped || 'N/A'),
+                'Services Offered (Input)': Array.isArray(report.services_offered_input) ? report.services_offered_input.join(', ') : (report.services_offered_input || 'N/A'),
+                'Services Offered (Found)': Array.isArray(report.services_offered_scraped) ? report.services_offered_scraped.join(', ') : (report.services_offered_scraped || 'N/A'),
+                'Verified Fields': stats.verified,
+                'Mismatched Fields': stats.unverified,
+                'Not Found Fields': stats.notFound,
+                'Confidence Score': `${stats.confidence}%`,
+                'Verification Date': report.created_at ? new Date(report.created_at).toLocaleString() : 'N/A'
+            };
+        });
+
+        // Create workbook and worksheet
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(excelData);
+
+        // Set column widths
+        ws['!cols'] = [
+            { wch: 25 }, { wch: 25 }, { wch: 20 }, { wch: 35 }, { wch: 35 },
+            { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 20 },
+            { wch: 30 }, { wch: 30 }, { wch: 30 }, { wch: 30 },
+            { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 20 }
+        ];
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Verification Reports');
+
+        // Generate filename with date
+        const date = new Date().toISOString().split('T')[0];
+        XLSX.writeFile(wb, `Provider_Verification_Reports_${date}.xlsx`);
+    };
+
     const calculateVerificationStats = (report) => {
         if (!report) return {
             verified: 0,
@@ -635,6 +684,18 @@ const ReportsPage = () => {
                         ) : (
                             <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Run Verify All</>
                         )}
+                    </motion.button>
+                    <motion.button
+                        className="download-excel-button"
+                        onClick={handleDownloadExcel}
+                        disabled={reports.length === 0}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Download Excel
                     </motion.button>
                 </motion.div>
             </div>
