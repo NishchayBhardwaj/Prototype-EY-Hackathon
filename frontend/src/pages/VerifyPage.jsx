@@ -38,17 +38,17 @@ const SPECIALTIES = [
     'Vascular Surgery',
 ];
 
-// Insurance networks list
+// Insurance networks list - Priority networks first
 const INSURANCE_NETWORKS = [
     'Aetna',
-    'Anthem Blue Cross',
     'Blue Cross Blue Shield',
     'Cigna',
+    'UnitedHealthcare',
     'Humana',
+    'Anthem Blue Cross',
     'Kaiser Permanente',
     'Medicare',
     'Medicaid',
-    'UnitedHealthcare',
     'Oscar Health',
     'Molina Healthcare',
     'Centene',
@@ -1034,25 +1034,53 @@ const VerifyPage = () => {
                                                         value={formData.licenseNumber}
                                                         onChange={handleInputChange}
                                                     />
-                                                </div>
-
-                                                <div className="form-group form-group--full">
+                                                </div>                                                <div className="form-group form-group--full">
                                                     <label className="form-label">Affiliated Insurance Networks</label>
-                                                    <div className="insurance-grid">
-                                                        {INSURANCE_NETWORKS.map(network => (
-                                                            <label
-                                                                key={network}
-                                                                className={`insurance-chip ${formData.insuranceNetworks.includes(network) ? 'insurance-chip--selected' : ''}`}
-                                                            >
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={formData.insuranceNetworks.includes(network)}
-                                                                    onChange={() => handleNetworkToggle(network)}
-                                                                />
-                                                                <span className="insurance-chip__check">✓</span>
-                                                                <span>{network}</span>
-                                                            </label>
-                                                        ))}
+                                                    <div className="custom-multiselect">
+                                                        {/* Selected tags display */}
+                                                        <div className="custom-multiselect__tags">
+                                                            {formData.insuranceNetworks.length > 0 ? (
+                                                                formData.insuranceNetworks.map(network => (
+                                                                    <span key={network} className="custom-multiselect__tag">
+                                                                        {network}
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleNetworkToggle(network)}
+                                                                            className="custom-multiselect__tag-remove"
+                                                                            aria-label={`Remove ${network}`}
+                                                                        >
+                                                                            ×
+                                                                        </button>
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="custom-multiselect__placeholder">
+                                                                    Click to select insurance networks...
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {/* Dropdown options */}
+                                                        <div className="custom-multiselect__dropdown">
+                                                            {INSURANCE_NETWORKS.map(network => (
+                                                                <label
+                                                                    key={network}
+                                                                    className={`custom-multiselect__option ${
+                                                                        formData.insuranceNetworks.includes(network) ? 'custom-multiselect__option--selected' : ''
+                                                                    }`}
+                                                                >
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={formData.insuranceNetworks.includes(network)}
+                                                                        onChange={() => handleNetworkToggle(network)}
+                                                                    />
+                                                                    <span className="custom-multiselect__checkmark">
+                                                                        {formData.insuranceNetworks.includes(network) ? '✓' : ''}
+                                                                    </span>
+                                                                    <span className="custom-multiselect__option-text">{network}</span>
+                                                                </label>
+                                                            ))}
+                                                        </div>
                                                     </div>
                                                 </div>
 
