@@ -1358,14 +1358,16 @@ async def verify_all_doctors(db: Session = Depends(get_db)):
         
         # Fetch all existing reports
         all_reports = db.query(DoctorReport).all()
-        
         results = []
         successful = 0
         failed = 0
         skipped = 0
         
-        for report in all_reports:
+        for idx, report in enumerate(all_reports, 1):
             try:
+                # Log progress
+                logger.info(f"Processing {idx}/{len(all_reports)}: {report.verification_id}")
+                
                 # Check if we have minimum required data for verification
                 full_name = report.full_name_input or report.full_name_scraped
                 specialty = report.specialty_input or report.specialty_scraped
@@ -1378,6 +1380,7 @@ async def verify_all_doctors(db: Session = Depends(get_db)):
                         message="Missing required fields (name or specialty)"
                     ))
                     skipped += 1
+                    logger.warning(f"Skipped {report.verification_id}: Missing required fields")
                     continue
                 
                 # Create verification request from existing data
@@ -1390,8 +1393,19 @@ async def verify_all_doctors(db: Session = Depends(get_db)):
                     insuranceNetworks=report.insurance_networks_input,
                     servicesOffered=report.services_offered_input[0] if isinstance(report.services_offered_input, list) and report.services_offered_input else (report.services_offered_input if isinstance(report.services_offered_input, str) else None)
                 )
-                  # Search for doctor information
-                scraped_data = search_doctor_info(full_name, specialty, report.address_input)
+                
+                # Search for doctor information with timeout handling
+                try:
+                    scraped_data = search_doctor_info(full_name, specialty, report.address_input)
+                except Exception as scrape_error:
+                    logger.error(f"Scraping error for {full_name}: {str(scrape_error)}")
+                    # Continue with empty scraped_data rather than failing completely
+                    scraped_data = {
+                        "name": full_name,
+                        "specialty": specialty,
+                        "npi_data": {},
+                        "scraped_sources": []
+                    }
                 
                 # Analyze verification results
                 verification_result = await analyze_verification(verification_request, scraped_data)
@@ -1426,14 +1440,22 @@ async def verify_all_doctors(db: Session = Depends(get_db)):
                 report.insurance_networks_scraped = verification_result["insuranceNetworks"]["scraped_data_field_a"]
                 report.insurance_networks_scraped_from = verification_result["insuranceNetworks"]["scraped_from"]
                 report.insurance_networks_matches = verification_result["insuranceNetworks"]["matches"]
-                
                 report.services_offered_input = verification_result["servicesOffered"]["input_field_a"]
                 report.services_offered_scraped = verification_result["servicesOffered"]["scraped_data_field_a"]
                 report.services_offered_scraped_from = verification_result["servicesOffered"]["scraped_from"]
                 report.services_offered_matches = verification_result["servicesOffered"]["matches"]
                 
-                # Commit the update
-                db.commit()
+                # Update timestamp
+                report.updated_at = datetime.now()
+                
+                # Commit the update for this specific doctor
+                try:
+                    db.commit()
+                    logger.info(f"✅ Successfully committed verification for {full_name}")
+                except Exception as commit_error:
+                    logger.error(f"Database commit failed for {full_name}: {str(commit_error)}")
+                    db.rollback()
+                    raise commit_error
                 
                 results.append(VerifyAllProgressItem(
                     verification_id=report.verification_id,
@@ -1443,18 +1465,29 @@ async def verify_all_doctors(db: Session = Depends(get_db)):
                 ))
                 successful += 1
                 
-                logger.info(f"Successfully re-verified doctor: {full_name}")
+                logger.info(f"✅ [{idx}/{len(all_reports)}] Successfully verified: {full_name}")
                 
-            except Exception as e:
-                logger.error(f"Error verifying doctor {report.verification_id}: {str(e)}")
+            except Exception as e:                
+                error_msg = str(e)
+                logger.error(f"❌ [{idx}/{len(all_reports)}] Error verifying {report.verification_id}: {error_msg}")
                 db.rollback()
                 results.append(VerifyAllProgressItem(
                     verification_id=report.verification_id,
                     full_name=report.full_name_input or report.full_name_scraped or "Unknown",
                     status="failed",
-                    message=str(e)
+                    message=f"Verification failed: {error_msg[:200]}"  # Truncate long error messages
                 ))
                 failed += 1
+        
+        # Log final summary
+        logger.info(f"")
+        logger.info(f"{'='*60}")
+        logger.info(f"🎯 BULK VERIFICATION SUMMARY")
+        logger.info(f"📊 Total Processed: {len(all_reports)}")
+        logger.info(f"✅ Successful: {successful}")
+        logger.info(f"❌ Failed: {failed}")
+        logger.info(f"⏭️  Skipped: {skipped}")
+        logger.info(f"{'='*60}")
         
         response = VerifyAllResponse(
             total_processed=len(all_reports),
