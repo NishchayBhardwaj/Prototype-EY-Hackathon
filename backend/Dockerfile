@@ -10,10 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install only Chromium browser (lighter than all browsers)
-RUN playwright install chromium && \
-    playwright install-deps chromium && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -rf /tmp/*
+RUN python -m playwright install chromium
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
